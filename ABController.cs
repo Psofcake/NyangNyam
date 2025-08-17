@@ -8,57 +8,56 @@ using UnityEngine.Serialization;
 
 public class ABController : MonoBehaviour
 {
-    //새로작성-리스폰
     public Action AngryBirdNotification;
-    //새로작성-궤적
-    [FormerlySerializedAs("timestep")] public float timeStep = 0.1f;
-    public int step = 30;
-    public GameObject TracePrefab;
-    private List<GameObject> tracedObjects = new List<GameObject>();
     
-    public PowerGauge _powerGauge;
-    //개선할부분★public보다는 [SerializeField] private 변수로 선언하여 인스펙터에서 조절가능하도록 변경
-    public float MoveSpeed = 10;
-    public float JumpPower = 6;
-    public float MaxPower = 15;
-    public float MaxGapSize = 100;
+    [Header("References")] // 인스펙터에서 직접 바인딩
+    [SerializeField] private PowerGauge powerGauge;
+    [SerializeField] private Camera cam2D;
+    [SerializeField] private Camera cam3D;
+    [SerializeField] private Camera camCharacter;
+    [SerializeField] private GameObject tracePrefab;
+    [SerializeField] private AnimationClip[] animationClips;
+    [SerializeField] private SoundController soundController;  //개선할부분★ 차후에 싱글톤으로 변경해보자
 
-    //Camera
-    private int _camIndex = 2;
-    public Camera cam2d;
-    public Camera cam3d;
-    public Camera camCharacter;
-    //Animation
-    private int _animIndex = 0;
-    public AnimationClip[] _animationClips;
-    //Sound
-    private SoundController Sound;
-    
-    private Rigidbody _rigidbody;
-    private Animator _animator;
-    private Collider _collider;
+    [Header("Movement Settings")]
+    [SerializeField] private float walkSpeed = 10f;
+    [SerializeField] private float runSpeed = 20f;
+    [SerializeField] private float jumpPower = 6f;
+    [SerializeField] private float maxPower = 15f;
+    [SerializeField] private float maxGapSize = 100f;
 
-    //개선할부분★ 여러개의 bool변수 보다는 enum으로 상태를 관리하자.
+    [Header("Trajectory Settings")]
+    [SerializeField] private float timeStep = 0.1f;
+    [SerializeField] private int steps = 30;
+
+    // 유니티 컴포넌트
+    private Rigidbody rb;
+    private Animator animator;
+    private Collider launchPadCollider;
+
+    // 캐릭터의 상태를 enum으로 관리
+    private enum PlayerState { Idle, Moving, Jumping, Launched, Loaded }
+    private PlayerState currentState = PlayerState.Idle;
+
+    private int currentAnimIndex = 2;
+    private int currentCamIndex = -0;
     private bool isRunning = false;
-    private bool isLoaded = false;
     private bool isDragging = false;
-    private bool isLaunched = false;
     private bool isNearLaunchPad = false;
 
-    private Vector3 clickMousePosition = Vector2.zero;
-
+    private Vector3 clickMousePosition;
+    private List<GameObject> tracedObjects = new List<GameObject>();
+    
     private void Awake()
     {
-        //SoundController 스크립트를 가진 게임오브젝트 찾아오기
-        Sound =  GameObject.FindObjectOfType<SoundController>();
-        if(!Sound) Debug.Log("Not Found SoundManager");
+        if(!soundController) Debug.Log("Not Found SoundManager");
         
-        _rigidbody = GetComponent<Rigidbody>();
-        if (!_rigidbody)
+        rb = GetComponent<Rigidbody>();
+        if (!rb)
             Debug.Log("Not Found Rigidbody");
         
-        _animator = GetComponent<Animator>();
-        if (!_animator)
+        animator = GetComponent<Animator>();
+        if (!animator)
             Debug.Log("Not Found Animator");
         
     }
@@ -67,48 +66,38 @@ public class ABController : MonoBehaviour
     {
         ChangeCamera(0);
         //ERROR
-        _powerGauge.SetGaugePercent(1);
+        powerGauge.SetGaugePercent(1);
     }
-
+    
+    private void UpdateCameras()
+    {
+        camCharacter.transform.position = transform.position + new Vector3(-2, 1, 0);
+        cam3D.transform.position = transform.position + new Vector3(6, 4, -10);
+        
+        if (currentState==PlayerState.Launched)
+        {
+            float velocity = GetComponent<Rigidbody>().velocity.sqrMagnitude;
+            if (velocity > 0 && velocity < 10f)
+            {
+                //Debug.Log("velocity : " + velocity);
+                ChangeCamera(2);
+            }
+        }
+    }
     void ChangeCamera(int index)
     {
-        if (index == _camIndex) return;
-        if (index < 3)
-            _camIndex = index;
-        else
-            _camIndex = (_camIndex + 1) % 3;
-            
-        //개선할부분★개별 카메라를 연결하기보다는 리스트를 사용해 카메라를 관리하고 인덱스 기반으로 처리하도록 차후에 변경하자.
-        switch (_camIndex)
-        {
-            case 0:
-                cam2d.enabled = false;
-                cam3d.enabled = false;
-                camCharacter.enabled = true;
-                camCharacter.transform.GetChild(0).gameObject.SetActive(false);
-                _powerGauge.transform.GetChild(0).gameObject.SetActive(false);
-                _powerGauge.transform.GetChild(1).gameObject.SetActive(false);
-                Debug.Log("Cam - Character");
-                break;
-            case 1:
-                cam2d.enabled = true;
-                cam3d.enabled = true;
-                camCharacter.enabled = false;
-                cam3d.transform.GetChild(0).gameObject.SetActive(true);
-                _powerGauge.transform.GetChild(0).gameObject.SetActive(true);
-                _powerGauge.transform.GetChild(1).gameObject.SetActive(true);
-                Debug.Log("Cam - Main");
-                break;
-            case 2:
-                cam2d.enabled = true;
-                cam3d.enabled = false;
-                camCharacter.enabled = true;
-                camCharacter.transform.GetChild(0).gameObject.SetActive(true);
-                _powerGauge.transform.GetChild(0).gameObject.SetActive(false);
-                _powerGauge.transform.GetChild(1).gameObject.SetActive(false);
-                Debug.Log("Cam - Character+Minimap");
-                break;
-        }
+        currentCamIndex = index;
+        
+        cam2D.enabled = index == 1 || index == 2;
+        cam3D.enabled = index == 1;
+        camCharacter.enabled = index == 0 || index == 2;
+
+        camCharacter.transform.GetChild(0).gameObject.SetActive(index == 1 || index == 2);
+
+        powerGauge.transform.GetChild(0).gameObject.SetActive(index == 1);
+        powerGauge.transform.GetChild(1).gameObject.SetActive(index == 1);
+
+        Debug.Log($"Camera Changed: {index}");
     }
     
     void PlayAnim(string anim)
@@ -128,20 +117,20 @@ public class ABController : MonoBehaviour
                 break;
             case "Jump":
                 index = 3;
-                Sound.PlayJumping();
+                soundController.PlayJumping();
                 break;
             case "Greeting":
                 index = 4;
                 break;
         }
         
-        if (index == _animIndex) return; //현재 실행중인 애니메이션이면 return
-        else _animIndex = index; //아니면 인덱스 저장
+        if (index == currentAnimIndex) return; //현재 실행중인 애니메이션이면 return
+        else currentAnimIndex = index; //아니면 인덱스 저장
         
         //개선할부분★ToString().Substring보다는 AnimationClip.name을 사용해서 애니메이션 이름 추출하기
-        anim = _animationClips[_animIndex].ToString().Substring(0,_animationClips[_animIndex].ToString().IndexOf(" "));
+        anim = animationClips[currentAnimIndex].ToString().Substring(0,animationClips[currentAnimIndex].ToString().IndexOf(" "));
         
-        _animator.CrossFade(anim,0.1f); //해당 애니메이션 실행
+        animator.CrossFade(anim,0.1f); //해당 애니메이션 실행
     }
     
     void Shoot(Vector3 direction, float normalized)
@@ -149,8 +138,7 @@ public class ABController : MonoBehaviour
         ChangeCamera(1);
         PlayAnim("Jump");
         //Debug.Log("Direction:"+direction+" / Power:"+normalized*MaxPower);
-        _rigidbody.AddForce(direction * (normalized*MaxPower), ForceMode.Impulse);
-        isLaunched = true;
+        rb.AddForce(direction * (normalized*maxPower), ForceMode.Impulse);
         
         //ERROR   
         StartCoroutine(AngryBirdSpeedObserver());
@@ -161,216 +149,180 @@ public class ABController : MonoBehaviour
     // Update is called once per frame
     void Update()   //개선할부분★ 너무 커서 읽기 어려움.. 각 기능별로 메서드 분리 필요(이동,점프,발사,카메라 조작 등)
     {
-        //발사시 FreezeRotationX 해제 (데굴데굴..)
-        if (isLaunched)
-        {
-            _rigidbody.constraints &= ~RigidbodyConstraints.FreezeRotationX;
-        }
+        UpdateConstraints();
+        UpdateCameras();
+    
+        HandleInput();
+    }
+    private void UpdateConstraints()
+    {
+        if (currentState == PlayerState.Launched) //발사 완료 시 FreezeRotationX 해제
+            rb.constraints &= ~RigidbodyConstraints.FreezeRotationX;
         else
+            rb.constraints |= RigidbodyConstraints.FreezeRotationX;
+    }
+    private void HandleInput()
+    {
+        switch (currentState)
         {
-            _rigidbody.constraints |= RigidbodyConstraints.FreezeRotationX;
-        }
-        //CHECK
-        camCharacter.transform.position = transform.position+new Vector3(-2, 1, 0);
-        cam3d.transform.position = transform.position+new Vector3(6,4,-10);
-        if (isLaunched)
-        {
-            float velocity = GetComponent<Rigidbody>().velocity.sqrMagnitude;
-            if (velocity > 0 && velocity < 10f)
-            {
-                //Debug.Log("velocity : " + velocity);
-                ChangeCamera(2);
-            }
-        }
-
-        if (Input.GetKeyDown(KeyCode.C)) //카메라전환
-        {
-            ChangeCamera(10);
+            case PlayerState.Idle:
+            case PlayerState.Moving:
+                HandleMovement();
+                break;
+            case PlayerState.Loaded:
+                HandleLoadedState();
+                break;
+            case PlayerState.Launched:
+                HandleReload();
+                break;
         }
 
-        if (isLoaded)
+        if (Input.GetKeyDown(KeyCode.C))
+            ChangeCamera((currentCamIndex + 1) % 3);
+    }
+    private void HandleMovement()
+    {
+        isRunning = Input.GetKey(KeyCode.LeftShift);
+        float moveSpeed = isRunning ? runSpeed : walkSpeed;
+
+        if (Input.GetKey(KeyCode.A))
         {
-            _rigidbody.isKinematic = true;
-            //발사대 탑승시 발사 위치에 포지셔닝
-            transform.position = _collider.transform.GetChild(0).transform.GetChild(1).transform.GetChild(0).position;
-            transform.rotation = _collider.transform.GetChild(0).transform.GetChild(1).transform.GetChild(0).rotation;
+            transform.rotation = Quaternion.Euler(0, 270, 0);
+            rb.MovePosition(transform.position + transform.forward * moveSpeed * Time.deltaTime);
+            PlayAnim("Move");
+            currentState = PlayerState.Moving;
+        }
+        else if (Input.GetKey(KeyCode.D))
+        {
+            transform.rotation = Quaternion.Euler(0, 90, 0);
+            rb.MovePosition(transform.position + transform.forward * moveSpeed * Time.deltaTime);
+            PlayAnim("Move");
+            currentState = PlayerState.Moving;
+        }
+
+        if (Input.GetKeyUp(KeyCode.A) || Input.GetKeyUp(KeyCode.D))
+        {
             PlayAnim("Idle");
+            currentState = PlayerState.Idle;
         }
-        else //Loaded 아닐때만 Move+Jump 가능
+        if (Input.GetKeyDown(KeyCode.W))
         {
-            //Move
-            if (Input.GetKey(KeyCode.LeftShift))
-            {
-                isRunning = true;
-                MoveSpeed = 20;
-            }
-            else
-            {
-                isRunning = false;
-                MoveSpeed = 10;
-            }
-            
-            if (Input.GetKey(KeyCode.A))
-            {
-                transform.rotation = Quaternion.Euler(0,270,0);
-                _rigidbody?.MovePosition(Vector3.MoveTowards(transform.position, transform.forward * 100,
-                    MoveSpeed * Time.deltaTime));
-                
-                PlayAnim("Move");
-            }
-
-            if (Input.GetKey(KeyCode.D))
-            {
-                transform.rotation = Quaternion.Euler(0,90,0);
-                _rigidbody?.MovePosition(Vector3.MoveTowards(transform.position, transform.forward * 100,
-                    MoveSpeed * Time.deltaTime));
-                
-                PlayAnim("Move");
-            }
-
-            if (Input.GetKeyUp(KeyCode.A) || Input.GetKeyUp(KeyCode.D))
-            {
-                PlayAnim("Idle");
-            }
-
-            //Jump
-            if (Input.GetKeyDown(KeyCode.W))
-            {
-                PlayAnim("Jump");
-                _rigidbody?.AddForce(Vector3.up * JumpPower, ForceMode.Impulse);
-                
-            }
-
-            if (Input.GetKeyDown(KeyCode.G))
-            {
-                PlayAnim("Greeting");
-            }
-
+            PlayAnim("Jump");
+            rb?.AddForce(Vector3.up * jumpPower, ForceMode.Impulse);
+            currentState = PlayerState.Jumping;
         }
-
-        if (Input.GetKeyDown(KeyCode.Space)&&isLaunched) //재장전, 제자리에 배치
+        if (Input.GetKeyDown(KeyCode.G))
         {
-            ChangeCamera(1);
-            isLoaded = true;
-            isLaunched = false;
-            
-            Debug.Log("Bomb is Reloaded.");
+            PlayAnim("Greeting");
         }
-        //Load & Unload
-        if (Input.GetKeyDown(KeyCode.S)&&isNearLaunchPad)
+
+        if (Input.GetKeyDown(KeyCode.S) && isNearLaunchPad)
         {
-            isLoaded = !isLoaded;
-            isLaunched = false;
-            
-            if (isLoaded)
-            {
-                ChangeCamera(1);
-                Debug.Log("Bomb is Loaded.");
-            }
-            else
-            {
-                //발사대에서 내리기
-                ChangeCamera(0);
-                transform.position = transform.position + new Vector3(0, 1, 0);
-                transform.rotation = Quaternion.Euler(0, 90, 0);
-                Debug.Log("Bomb is Unloaded."); }
+            Load();
         }
-        
-        //ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡAngryBirdㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-        // 마우스가 클릭 됐다면 ( 0번은 == 왼쪽 1번은 오른쪽 )
-        if(Input.GetMouseButtonDown(0) && isLoaded )
+    }
+    private void Load()
+    {
+        currentState = PlayerState.Loaded;
+        rb.isKinematic = true;
+
+        Transform launchTransform = launchPadCollider.transform.GetChild(0).GetChild(1).GetChild(0);
+        transform.position = launchTransform.position;
+        transform.rotation = launchTransform.rotation;
+
+        PlayAnim("Idle");
+        ChangeCamera(1);
+        Debug.Log("Bomb is Loaded.");
+    }
+    private void HandleLoadedState()
+    {
+        if (Input.GetMouseButtonDown(0)) //마우스 왼쪽 버튼이 눌리면 드래깅으로 체크하기
         {
             isDragging = true;
-            clickMousePosition = Input.mousePosition;
-            
-            // cam.ScreenToWorldPoint :: 마우스 포지션을 월드 좌표로 변환한다.
-            // 참고 링크 : https://docs.unity3d.com/ScriptReference/Camera.ScreenToWorldPoint.html
-            //Vector3 worldPoint = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            clickMousePosition = Input.mousePosition; //클릭된위치 저장
         }
-        
-        // 드래그 중이면
+
         if (isDragging)
         {
-            Vector3 gap = clickMousePosition - Input.mousePosition;
-            
-            // 그 길이가 마우스 최대 허용범위를 넘어서면
-            float currentGap = gap.magnitude;
-            if (currentGap >= MaxGapSize)
-            {
-                // 마우스 최대 허용 범위로 바뀐다.
-                currentGap = MaxGapSize;
-            }
-
-            float gaugePercent = currentGap / MaxGapSize;
-            
-            //ERROR
-            _powerGauge.SetGaugePercent(gaugePercent);
-            
-            //gap에 방향이 있다면
-            Vector3 dir = gap.normalized;
-            if (dir != Vector3.zero)
-            {
-                //마우스 방향에 따라 발사대방향 회전
-                _collider.transform.GetChild(0).transform.GetChild(1).transform.right = -dir;
-            }
-            
-            // ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ궤적그리기ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-            //개선할부분★ 오브젝트 풀링으로 궤적그리기 점선의 개수를 제한하고 성능 낭비를 줄이자
-            if (tracedObjects.Count <= 0)
-            {
-                for (int i = 0; i < step; ++i)
-                {
-                    float time = timeStep * i;
-                    tracedObjects.Add(Instantiate(TracePrefab));
-                }
-
-                //라인렌더러 사용시 : _renderer.positionCount = step;
-            }
-            else
-            {
-                Vector3 impluseVelocity = dir * (currentGap / MaxGapSize) * MaxPower;
-                
-                Vector3 CurrentPosition = _rigidbody.position;
-                Vector3 CurrentVelocity = _rigidbody.velocity + impluseVelocity;
-                Vector3 currentAccelation = Physics.gravity;
-                
-                for (int i = 0; i < step; ++i)
-                {
-                    float time = timeStep * i;
-                    // 중력가속도
-                    Vector3 gravityFactor = currentAccelation * (0.5f * time * time);
-                    
-                    // 현재 포지션 + 속도 * 시간;
-                    // 속도 * 시간 = 거리 벡터가 나오고0
-                    Vector3 future = CurrentPosition + CurrentVelocity * time + gravityFactor ;
-                    tracedObjects[i].transform.position = future;
-                    //라인렌더러 _renderer.SetPosition(i, future);
-                    //tracedObjects.Add(Instantiate(TracePrefab,future,Quaternion.identity));
-                }
-            }
-
-            // ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ궤적그리기 endㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-            
-            
-            //마우스를 떼면 머리방향으로 날아가게 함
-            if (Input.GetMouseButtonUp(0))
-            {
-                _rigidbody.isKinematic = false;
-                isLoaded = false;
-                Shoot(transform.up, currentGap/MaxGapSize);
-                isDragging = false;
-                
-                //궤적그리기
-                foreach (var tracedObject in tracedObjects)
-                {
-                    Destroy(tracedObject);
-                }
-                tracedObjects.Clear();
-            }
+            HandleDragAndTrajectory();
         }
-        //ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡAngryBirdEndㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-    }
 
+        if (Input.GetKeyDown(KeyCode.S) && isNearLaunchPad)
+            Unload();
+    }
+    private void Unload()
+    {
+        currentState = PlayerState.Idle;
+        transform.position += Vector3.up;
+        transform.rotation = Quaternion.Euler(0, 90, 0);
+        ChangeCamera(0);
+        Debug.Log("Bomb is Unloaded.");
+    }
+    
+    private void HandleReload() //발사대위치로 재장전하기
+    {
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            Load();
+            Debug.Log("Bomb is Reloaded.");
+        }
+    }
+    private void HandleDragAndTrajectory()
+    {
+        //gap=(마우스가클릭된위치-이동한뒤지금위치)
+        Vector3 gap = clickMousePosition - Input.mousePosition;
+        
+        //gap만큼의 거리, maxGapSize 중 더 작은 숫자로 반환. 즉, 최대범위를 제한.
+        float currentGap = Mathf.Min(gap.magnitude, maxGapSize);
+        
+        float gaugePercent = currentGap / maxGapSize;   // 파워게이지가 얼만큼 채워졌는지(0~1)
+        powerGauge.SetGaugePercent(gaugePercent);   //비율만큼 게이지바에 적용
+
+        Vector3 dir = gap.normalized;
+        if (dir != Vector3.zero)
+        {
+            //마우스 방향에 따라 발사대방향 회전
+            launchPadCollider.transform.GetChild(0).GetChild(1).right = -dir;
+        }
+        //날아갈 예상 궤적 그리기
+        DrawTrajectory(dir, gaugePercent);
+        //마우스를 떼면 날아가기.
+        if (Input.GetMouseButtonUp(0))
+        {
+            rb.isKinematic = false;
+            currentState = PlayerState.Launched;
+            isDragging = false;
+            Shoot(dir, gaugePercent);
+            ClearTrajectory();  //궤적 지우기
+        }
+    }
+    private void DrawTrajectory(Vector3 dir, float powerRatio)
+    {
+        if (tracedObjects.Count == 0) //빈 배열이므로 궤적그리기에 사용할 동그라미 인스턴스들 넣어주기
+        {
+            for (int i = 0; i < steps; ++i)
+                tracedObjects.Add(Instantiate(tracePrefab));
+        }
+
+        Vector3 impulseVelocity = dir * powerRatio * maxPower;
+        Vector3 position = rb.position;
+        Vector3 accelation = Physics.gravity;
+
+        for (int i = 0; i < steps; ++i)
+        {
+            float time = timeStep * i;
+
+            Vector3 gravityFactor = accelation * 0.5f * time * time; //중력가속도
+            Vector3 future = position + (rb.velocity+impulseVelocity) * time + gravityFactor; //velocity*time = 거리벡터
+            tracedObjects[i].transform.position = future;
+        }
+    }
+    private void ClearTrajectory()
+    {
+        foreach (var tracedObject in tracedObjects)
+            Destroy(tracedObject);
+        tracedObjects.Clear();
+    }
     
     //발사대에 닿아있는지 체크
     private void OnTriggerEnter(Collider other)
@@ -378,7 +330,7 @@ public class ABController : MonoBehaviour
         if (other.CompareTag("LaunchPad"))
         {
             isNearLaunchPad = true;
-            _collider = other;
+            launchPadCollider = other;
         }
     }
 
@@ -389,14 +341,13 @@ public class ABController : MonoBehaviour
             isNearLaunchPad = false;
         }
     }
-
-    // 새로작성-리스폰
+    
     public IEnumerator AngryBirdSpeedObserver()
     {
         yield return new WaitForSeconds(1); //가속도가 붙어야하므로 1초기다림
         
         //오브젝트는 velocity제곱근이 1f보다 빠를때까지만 생존
-        while (GetComponent<Rigidbody>().velocity.sqrMagnitude > 0.01f)
+        while (rb.velocity.sqrMagnitude > 0.01f)
         {
             yield return null;
         }
